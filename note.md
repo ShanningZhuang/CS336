@@ -1,5 +1,7 @@
 ## Lecture 1
 
+https://stanford-cs336.github.io/spring2025-lectures/?trace=var/traces/lecture_01.json
+
 Of course. Here is a preview for your lecture session based on the materials provided.
 
 ### Summary
@@ -141,6 +143,8 @@ The lecture also briefly mentions **Tokenizer-Free Approaches** (e.g., `byt5`, `
 
 ## Lecture 2
 
+https://stanford-cs336.github.io/spring2025-lectures/?trace=var/traces/lecture_02.json
+
 Of course! Here is your course preview based on the provided materials.
 
 ### Summary
@@ -259,3 +263,191 @@ You are asked to plan a fine-tuning run for a 7-billion-parameter language model
     -   **Effective FLOP/s:** Peak FLOP/s × MFU = 989.5e12 × 0.50 = 494.75e12 FLOP/s.
     -   **Total Time (seconds):** Total FLOPs / Effective FLOP/s = 8.4e20 / 494.75e12 ≈ 1.7e6 seconds.
     -   **Total Time (days):** 1.7e6 seconds / (60 sec/min × 60 min/hr × 24 hr/day) ≈ **19.7 days**.
+
+## Lecture 3
+
+This Lecture talk about the Transformer's training.
+I think before taking this class, first learn about transformer.
+https://web.stanford.edu/class/cs224n/
+https://web.stanford.edu/class/cs224n/slides_w25/cs224n-2025-lecture08-transformers.pdf
+https://web.stanford.edu/class/cs224n/readings/cs224n-self-attention-transformers-2023_draft.pdf
+
+### Summary  
+Lecture 3 of CS336 delves into the common architecture variations and hyperparameters of large language models (LLMs), focusing on what aspects are shared and what varies among state-of-the-art transformers. It covers key design choices such as pre-norm vs post-norm LayerNorm, RMSNorm vs LayerNorm, and the role of bias terms. The lecture explains various activation functions including ReLU, GeLU, and gated linear units like SwiGLU, highlighting their empirical effects. It also explores serial versus parallel transformer layers and the rationale behind rotary position embeddings (RoPE) for relative positional encoding. Hyperparameters such as feedforward dimension ratios, number of attention heads, model depth vs width, vocabulary sizes, and regularization strategies are analyzed with empirical evidence from many modern models. Finally, the session discusses stability tricks like z-loss and QK norm for softmax stability and attention head optimizations such as multi-query and group-query attention to reduce inference costs. The lecture emphasizes learning from a broad survey of recent LLMs to inform design decisions[1].
+
+### Key Concepts  
+- Pre-norm LayerNorm improves gradient flow and training stability.  
+- RMSNorm is a faster alternative to LayerNorm without mean subtraction.  
+- Gated linear units (GLUs) like SwiGLU enhance feedforward networks.  
+- Rotary position embeddings (RoPE) encode relative positions via rotations.  
+- Feedforward dimension typically 4× model dimension; GLUs use ~2.67×.  
+- Most models maintain head_dim × num_heads ≈ model_dim ratio.  
+- Serial transformer layers are standard; parallel layers can speed training.  
+- Vocabulary size varies: 30-50k for monolingual, 100k+ for multilingual.  
+- Regularization (weight decay) affects optimization dynamics more than overfitting.  
+- Stability tricks: z-loss for output softmax, QK norm for attention softmax.  
+- Attention head optimizations: Multi-Query Attention (MQA), Group-Query Attention (GQA).  
+
+### Guiding Questions  
+1. Why do most modern LLMs prefer pre-norm over post-norm LayerNorm?  
+2. How do rotary position embeddings (RoPE) improve relative position encoding compared to sine or absolute embeddings?  
+3. What are the trade-offs between serial and parallel transformer layer designs?  
+4. How does the choice of activation function, especially gated linear units, impact model performance and efficiency?  
+5. What hyperparameter ratios (feedforward size, head dimensions) are empirically optimal for large-scale transformers?  
+
+### Warm-up  
+**Q1:** What is the main difference between pre-norm and post-norm transformer architectures?  
+**A1:** Pre-norm applies LayerNorm before the attention and feedforward blocks, improving gradient flow and stability; post-norm applies LayerNorm after residual addition.  
+
+**Q2:** Fill in the blank: Rotary position embeddings (RoPE) encode positional information by applying ________ to query and key vectors.  
+**A2:** rotations (in 2D coordinate pairs) using sine and cosine functions.  
+
+**Q3:** Which activation function is commonly used in recent LLMs like LLaMA and PaLM that involves gating?  
+a) ReLU  
+b) GeLU  
+c) SwiGLU  
+**A3:** c) SwiGLU, a gated linear unit combining swish and GLU mechanisms.
+
+### 1. Quick Quiz  
+**Q1:** What is the primary advantage of using pre-norm LayerNorm over post-norm in transformer architectures?  
+**A1:** Pre-norm improves gradient flow and training stability, reducing gradient spikes and enabling larger learning rates.  
+
+**Q2:** How do rotary position embeddings (RoPE) differ from absolute or sine positional embeddings?  
+**A2:** RoPE encodes relative positions by rotating query and key vectors in 2D coordinate pairs, preserving relative position invariance without additive cross terms.  
+
+**Q3:** What is the typical ratio of feedforward dimension (d_ff) to model dimension (d_model) in large language models, and how does this change with GLU activations?  
+**A3:** Typically d_ff ≈ 4 × d_model; for GLU variants, d_ff is scaled down to about 8/3 × d_model (~2.67×).  
+
+**Q4:** What stability tricks are used to prevent softmax instability in large transformers?  
+**A4:** Z-loss stabilizes output softmax; QK norm stabilizes attention softmax by normalizing query and key vectors.  
+
+**Q5:** What are Multi-Query Attention (MQA) and Group-Query Attention (GQA), and why are they used?  
+**A5:** MQA reduces key/value dimensions to save memory and speed inference; GQA balances expressiveness and efficiency by grouping queries.  
+
+---
+
+### 2. Concept Network  
+- **Pre-norm LayerNorm** ↔ improves → **Gradient Stability** ↔ enables → **Larger Learning Rates**  
+- **LayerNorm vs RMSNorm** ↔ trade-off → **Compute Efficiency** and **Parameter Count**  
+- **Activation Functions** ↔ include → **ReLU, GeLU, SwiGLU (GLU variants)** ↔ impact → **Model Performance and Efficiency**  
+- **Rotary Position Embeddings (RoPE)** ↔ encode → **Relative Positions** ↔ improve → **Position Invariance in Attention**  
+- **Feedforward Dimension (d_ff)** ↔ proportional to → **Model Dimension (d_model)** ↔ affects → **Model Capacity**  
+- **Attention Heads** ↔ number and size → affect → **Model Expressiveness and Compute Cost**  
+- **Stability Tricks (Z-loss, QK norm)** ↔ mitigate → **Softmax Instability** ↔ improve → **Training Stability**  
+- **Parallel vs Serial Transformer Layers** ↔ trade-off → **Training Speed vs Model Quality**  
+- **MQA/GQA** ↔ optimize → **Inference Efficiency** ↔ by reducing → **KV Cache Memory**  
+
+---
+
+### 3. Typical Pitfalls  
+1. Confusing pre-norm and post-norm LayerNorm placement and their impact on gradient flow and training stability.  
+2. Misunderstanding positional embeddings: assuming absolute or sine embeddings are relative, unlike RoPE which ensures relative positional invariance.  
+3. Ignoring the importance of the feedforward dimension ratio, leading to suboptimal model capacity or efficiency.  
+4. Overlooking stability tricks like z-loss and QK norm, resulting in unstable softmax computations and training failures.  
+5. Underestimating the computational and memory costs of attention heads, especially during incremental text generation without MQA/GQA optimizations.  
+
+---
+
+### 4. Micro-Application  
+**Task:**  
+Implement a small transformer block in PyTorch that uses pre-norm LayerNorm, SwiGLU activation in the feedforward network, and applies rotary position embeddings (RoPE) to the query and key vectors. Use dummy input data to verify the forward pass runs without errors. Then, experiment by switching the LayerNorm to post-norm and observe any differences in training stability or output variance over several iterations.
+
+**Hints / Sample Solution:**  
+- Use `torch.nn.LayerNorm` before attention and feedforward layers for pre-norm.  
+- Implement SwiGLU as two linear layers with a swish gating mechanism: $$ \text{SwiGLU}(x) = (xW_1) \times \sigma(xW_2) $$.  
+- For RoPE, pair up query/key dimensions and apply sine/cosine rotations based on position indices.  
+- Compare pre-norm and post-norm by training on a simple toy task (e.g., sequence prediction) and monitoring gradient norms and loss curves.  
+- Expect pre-norm to show smoother gradients and more stable loss decrease.  
+
+This exercise reinforces understanding of core architectural choices and their practical impact on model behavior.
+
+## Lecture 4
+
+**Basic Concept of MoE: https://huggingface.co/blog/moe**
+
+![parallelism](images/parallelism.png)
+
+### Summary  
+Lecture 4 of CS336 focuses on Mixture of Experts (MoE), a neural network architecture that improves model efficiency and scalability by activating only a subset of specialized sub-models ("experts") per input token. The session explains how MoEs replace the dense feed-forward layers in transformers with multiple expert networks and a routing mechanism (the gating network) that selects which experts to activate. This sparse activation allows models to scale parameters massively without increasing computation proportionally, enabling faster training and inference. The lecture covers routing strategies like top-k token choice, training challenges such as load balancing and instability, and practical solutions including auxiliary balancing losses and router z-loss. It also discusses recent state-of-the-art MoE architectures like DeepSeek and Llama 4, highlighting their expert routing setups and training techniques such as upcycling from dense models. The session concludes with system-level considerations for parallelism and the benefits and limitations of MoEs in modern large language models.
+
+### Key Concepts  
+- Mixture of Experts (MoE) architecture activates sparse expert sub-networks dynamically.  
+- Experts replace dense feed-forward layers in transformers for scalability.  
+- Routing (gating) networks select top-k experts per token for processing.  
+- Load balancing losses ensure even expert utilization during training.  
+- Router z-loss improves numerical stability of gating softmax.  
+- Upcycling initializes MoEs from pretrained dense models.  
+- MoEs enable model and data parallelism across devices.  
+- Training MoEs involves managing sparsity and routing non-differentiability.  
+- Recent MoEs like DeepSeek v3 use fine-grained expert segmentation and shared experts.  
+
+### Guiding Questions  
+1. How does sparse activation in MoEs improve training efficiency compared to dense models?  
+2. Why is the gating network critical for MoE performance and how does it decide expert assignment?  
+3. What are the main challenges in training MoEs and how do balancing losses and z-loss address them?  
+4. How do recent MoE architectures like DeepSeek improve upon earlier designs?  
+5. What are the trade-offs of using MoEs in terms of infrastructure complexity and model stability?  
+
+### Warm-up  
+**Q1 (Multiple Choice):**  
+What is the main role of the gating network in a Mixture of Experts model?  
+A) Train all experts simultaneously  
+B) Select which experts process each input token  
+C) Combine outputs of all experts equally  
+D) Increase the model’s parameter count  
+
+**A1:** B) Select which experts process each input token  
+
+**Q2 (Fill-in-the-Blank):**  
+In MoE models, the feed-forward layer is replaced by multiple ______ that are activated sparsely per input token.  
+
+**A2:** experts  
+
+**Q3 (Short Answer):**  
+Why do MoE models typically use top-k routing for expert selection?  
+
+**A3:** Top-k routing selects the k experts with the highest routing scores per token, balancing exploration and load, and simplifying routing decisions for efficient sparse activation.
+
+### 1. Quick Quiz  
+**Q1:** What is the main architectural difference between a dense transformer model and a Mixture of Experts (MoE) model?  
+**A1:** Dense models use fully activated feed-forward layers for every token, while MoE models replace FFNs with multiple expert networks but activate only a few experts per token via a routing mechanism.  
+
+**Q2:** Why is top-k routing commonly used in MoE models?  
+**A2:** Top-k routing selects the k experts with the highest routing scores per token, balancing efficient sparse activation and load distribution.  
+
+**Q3:** What is the purpose of load balancing losses in training MoEs?  
+**A3:** Load balancing losses encourage even utilization of all experts to prevent some experts from being overloaded while others are underused, improving training stability and efficiency.  
+
+**Q4:** How does MoE enable scaling to larger parameter counts without proportional increases in computation?  
+**A4:** By activating only a small subset of experts per token, MoEs increase total parameters but keep active computation per token low, enabling large model capacity with efficient computation.  
+
+**Q5:** What is the role of the router z-loss in MoE training?  
+**A5:** Router z-loss improves numerical stability of the gating softmax by preventing large roundoff errors in floating-point calculations during routing.  
+
+### 2. Concept Network  
+- **Dense Transformer** ↔ **Feed-Forward Network (FFN)** (fully activated for all tokens)  
+- **MoE Model** ↔ **Sparse FFN Experts** (multiple FFNs, sparse activation)  
+- **Routing Network (Gating)** ↔ **Top-k Routing** (selects experts per token)  
+- **Load Balancing Loss** ↔ **Expert Utilization** (ensures even load across experts)  
+- **Router z-loss** ↔ **Numerical Stability** (stabilizes softmax in routing)  
+- **Upcycling** ↔ **Pretrained Dense Model Initialization** (used to initialize MoE experts)  
+- **Parallelism** ↔ **Expert, Model, Data Parallelism** (enables scaling MoE training)  
+- **Training Challenges** ↔ **Non-differentiable Routing, Instability** (addressed by heuristics and auxiliary losses)  
+
+### 3. Typical Pitfalls  
+1. **Confusing total parameters with active parameters:** MoEs have many parameters but only activate a few experts per token, so compute cost is much lower than total parameter count suggests.  
+2. **Assuming routing is fully differentiable:** Routing decisions are discrete and not differentiable, so training relies on heuristics like stochastic perturbations and balancing losses rather than pure gradient descent.  
+3. **Ignoring load imbalance:** Without load balancing losses, some experts become overloaded while others are rarely used, causing training instability and inefficiency.  
+4. **Overfitting in fine-tuning sparse MoEs:** Sparse models can overfit smaller fine-tuning datasets if not carefully managed.  
+5. **Underestimating infrastructure complexity:** MoEs require complex multi-device parallelism and communication patterns, which can be challenging to implement efficiently.  
+
+### 4. Micro-Application  
+**Task:**  
+Given a small transformer model with 4 layers, hidden size $$ d=512 $$, and FFN expansion factor 4, design a simple MoE layer to replace the dense FFN in one transformer block. Assume you have 8 experts and use top-2 routing per token. Calculate and compare the number of active parameters used per token in the dense FFN vs. the MoE FFN.  
+
+**Hints / Sample Solution:**  
+- Dense FFN parameters per layer: $$ 2 \times d \times 4d = 8d^2 = 8 \times 512^2 = 2,097,152 $$ parameters.  
+- MoE total FFN parameters: $$ 8 \times 2,097,152 = 16,777,216 $$ parameters (8 experts).  
+- Active experts per token: 2, so active parameters per token: $$ 2 \times 2,097,152 = 4,194,304 $$.  
+- Compare: Dense uses ~2 million FFN parameters per token; MoE activates ~4 million but can scale total parameters much higher without increasing per-token compute beyond this.  
+- This exercise illustrates how MoEs trade off total parameter count for sparse activation, enabling larger capacity with manageable compute.
