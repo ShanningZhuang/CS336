@@ -348,3 +348,922 @@ Given a small transformer model with 4 layers, hidden size $$ d=512 $$, and FFN 
 - Active experts per token: 2, so active parameters per token: $$ 2 \times 2,097,152 = 4,194,304 $$.  
 - Compare: Dense uses ~2 million FFN parameters per token; MoE activates ~4 million but can scale total parameters much higher without increasing per-token compute beyond this.  
 - This exercise illustrates how MoEs trade off total parameter count for sparse activation, enabling larger capacity with manageable compute.
+
+## Lecture 5
+
+### Preview
+
+### Summary  
+Lecture 5 of CS336 delves into the inner workings of GPUs and their critical role in accelerating machine learning, particularly deep learning. The lecture explains GPU architecture, focusing on the massively parallel execution model (SIMT), streaming multiprocessors (SMs), memory hierarchy, and the importance of optimizing memory access patterns. It highlights performance factors such as compute intensity, memory bandwidth, and instruction-level parallelism. The session covers practical techniques to maximize GPU efficiency, including tiling, fusion, recomputation, and memory coalescing. It also examines FlashAttention, an optimized attention algorithm that reduces memory access costs and speeds up transformer inference by clever tiling and fused operations. The lecture closes by emphasizing the balance between compute and memory in achieving scalable performance for large language models.
+
+### Key Concepts  
+- GPU architecture: SMs, warps, threads, SIMT execution  
+- Memory hierarchy: registers, shared memory, L1/L2 cache, global memory  
+- Compute intensity vs memory bandwidth trade-offs  
+- Tiling techniques for efficient matrix multiplication  
+- Memory coalescing to optimize access patterns  
+- Operator fusion to minimize memory round-trips  
+- Recomputation to reduce memory storage costs  
+- FlashAttention: tile-based softmax and matrix multiplies for speed  
+
+### Guiding Questions  
+1. How does the GPU SIMT model affect performance optimization strategies?  
+2. Why is tiling crucial for efficient GPU matrix multiplication?  
+3. What role does memory coalescing play in reducing latency and improving throughput on GPUs?  
+4. How does FlashAttention reduce memory access while computing softmax in transformers?  
+5. What are the trade-offs between compute and memory usage in GPU-accelerated deep learning?  
+
+### Warm-up  
+**Q1 (Multiple Choice):**  
+Which memory type in GPUs is the fastest and closest to the streaming multiprocessor (SM)?  
+A) Global Memory  
+B) L2 Cache  
+C) Shared Memory (SRAM)  
+D) L1 Cache  
+
+**A1:** C) Shared Memory (SRAM)  
+
+**Q2 (Fill-in-the-Blank):**  
+In GPU programming, a __warp__ consists of 32 threads executing the same instruction simultaneously under the SIMT model.  
+
+**A2:** warp  
+
+**Q3 (Short Answer):**  
+What is the main purpose of tiling in a GPU matrix multiplication?  
+
+**A3:** Tiling partitions matrices into smaller blocks to be loaded into faster shared memory, reducing global memory accesses and improving data reuse and compute efficiency.
+
+[1](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/64362196/b43b447e-999b-46ee-ad4f-2d2ca23e9e77/2025-Lecture-5-GPUs.pdf)
+
+### Review
+
+### 1. Quick Quiz  
+**Q1:** What is the primary execution model of GPUs, and how does it differ from CPUs?  
+**A1:** GPUs operate on the SIMT (Single Instruction, Multiple Threads) model, executing many threads in parallel with the same instruction, whereas CPUs optimize for fewer, faster threads with low latency.  
+
+**Q2:** Why is tiling an important technique for optimizing matrix multiplication on GPUs?  
+**A2:** Tiling partitions matrix multiplication into smaller blocks loaded into faster shared memory, reducing slower global memory accesses and improving data reuse and compute efficiency.  
+
+**Q3:** What does memory coalescing mean in the context of GPU memory access, and why is it important?  
+**A3:** Memory coalescing means adjacent threads access contiguous memory addresses together, reducing the number of memory accesses and improving bandwidth efficiency.  
+
+**Q4:** How does FlashAttention improve attention computation on GPUs?  
+**A4:** FlashAttention fuses multiple operations and uses tiling with an online softmax computation, reducing memory access overhead and speeding up transformer attention.  
+
+**Q5:** What role does operator fusion play in improving GPU performance for deep learning workloads?  
+**A5:** Operator fusion combines multiple pointwise operations into a single kernel to minimize memory read/write overhead and improve computational throughput.  
+
+### 2. Concept Network  
+- **GPU Architecture** ↔ **SIMT Execution** (thread parallelism model)  
+- **Memory Hierarchy** ↔ **Registers, Shared Memory, L1/L2 Cache, Global Memory** (speed vs capacity tradeoffs)  
+- **Tiling** ↔ **Matrix Multiplication Efficiency** (load blocks into fast shared memory)  
+- **Memory Coalescing** ↔ **Reduced Latency** (contiguous thread memory access)  
+- **Operator Fusion** ↔ **Minimized Memory Traffic** (reduce kernel launches and data movement)  
+- **FlashAttention** ↔ **Fused Softmax and Matmul** (speed and memory efficient attention)  
+- **Recomputation** ↔ **Memory-Compute Tradeoff** (recompute activations to save memory)  
+- **Precision Reduction** ↔ **Arithmetic Intensity** (low precision speeds up compute)  
+
+### 3. Pitfalls  
+1. Confusing GPU parallelism with CPU parallelism — GPUs optimize throughput with many threads, not latency of single threads.  
+2. Ignoring memory hierarchy — assuming all GPU memory accesses have equal latency can lead to poor performance.  
+3. Overlooking the importance of memory coalescing — uncoalesced accesses cause bandwidth bottlenecks.  
+4. Underestimating fusion benefits — separate kernels incur high overhead and latency due to memory traffic.  
+5. Misunderstanding tiling impact — improper tile size or unaligned dimensions reduce utilization and performance.  
+
+### 4. Micro-Application  
+**Task:**  
+Implement a matrix multiplication kernel for a GPU (conceptual or pseudocode level) that uses tiling to optimize memory access. Illustrate how data is loaded into shared memory and partial products are computed and accumulated in phases.  
+
+**Hints / Sample Solution:**  
+- Divide input matrices into tiles that fit in shared memory (e.g., 16x16 blocks).  
+- Each thread loads one or more elements from global memory into shared memory for both matrices.  
+- Synchronize threads in the block after loading to ensure data availability.  
+- Compute partial products within the tile and accumulate results in registers.  
+- Repeat for next tile segment until full matrix product is computed.  
+- Use thread and block indices to coordinate tile loading and computation.  
+
+This exercise demonstrates understanding of GPU memory hierarchy, thread coordination, and optimizing data reuse via tiling.
+
+[1](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/64362196/b43b447e-999b-46ee-ad4f-2d2ca23e9e77/2025-Lecture-5-GPUs.pdf)
+
+### Note
+
+memory model in GPU
+![coalesce](images/coalesce.png)
+```
+Perfect — this figure is a **classic GPU memory access optimization example**. Let me walk you through why **(A) is not coalesced** and **(B) is coalesced**.
+
+---
+
+## 🔑 Background: What “coalesced” means
+
+* On GPUs, threads in a warp (e.g. 32 threads) access memory *together*.
+* If those memory addresses are **contiguous (aligned, no big gaps)** → the hardware merges the loads into **one large memory transaction** = **coalesced access**.
+* If threads access memory **far apart or strided**, the GPU issues **multiple smaller transactions** = **not coalesced** (wasteful bandwidth, slower).
+
+---
+
+## 🅰️ Case A (Not coalesced)
+
+* Each **thread moves along rows** (row-major layout).
+* Thread 1 loads from row 1 → `M[0,0], M[0,1], …`
+* Thread 2 loads from row 2 → `M[1,0], M[1,1], …`
+* But in **row-major order**, memory is laid out row by row:
+
+  ```
+  M[0,0] M[0,1] M[0,2] ...
+  M[1,0] M[1,1] M[1,2] ...
+  ```
+* That means thread 1 and thread 2 are accessing **far-apart addresses** at the same time step.
+  → Warp accesses are **strided** (separated by matrix width).
+  → Memory transactions cannot be merged.
+  → **Not coalesced.**
+
+---
+
+## 🅱️ Case B (Coalesced)
+
+* Each **thread moves along columns** instead.
+* Thread 1 loads `M[0,0], M[1,0], M[2,0], …`
+* Thread 2 loads `M[0,1], M[1,1], M[2,1], …`
+* In memory (row-major order), the elements of a *row* are contiguous:
+
+  ```
+  M[0,0] M[0,1] M[0,2] ...
+  ```
+* At any one iteration, all threads (T0, T1, T2, …) are accessing **consecutive elements in the same row**.
+  → Warp accesses **map to consecutive addresses**.
+  → GPU can merge them into **a single memory transaction**.
+  → **Coalesced.**
+
+---
+
+## ✅ Summary
+
+* **A (row-walking per thread)** → each thread accesses elements far apart → warp memory requests are strided → **not coalesced**.
+* **B (column-walking per thread)** → each warp iteration accesses consecutive memory cells → **coalesced**.
+
+---
+
+👉 So the trick is:
+In **row-major layout**, you want **threads to differ in column index**, not row index, so that accesses line up **contiguously in memory**.
+
+---
+
+Do you want me to also sketch out what would happen if the matrix were stored in **column-major format (like Fortran/Matlab)** — the situation would flip!
+
+On **NVIDIA GPUs**, a **warp** = **32 threads**.
+
+* The GPU’s **SIMT (Single Instruction, Multiple Threads)** scheduler always issues instructions to groups of **32 threads** at once.
+* All 32 threads in a warp execute the same instruction, but on different data (like SIMD).
+* If threads diverge (e.g., `if/else` branches), the warp executes each path **serially**, masking out threads not on that path. This is called **warp divergence**.
+
+---
+
+### 📌 Quick Notes
+
+* **Warp size = 32** on all modern NVIDIA architectures (Kepler → Hopper/Blackwell).
+* **AMD GPUs** use the term **wavefront**, typically **64 threads**.
+* Frameworks (CUDA, ROCm, etc.) often expose this as `warpSize`.
+
+---
+
+✅ So:
+
+* **NVIDIA warp** = 32 threads
+* **AMD wavefront** = 64 threads
+
+---
+
+Would you like me to also explain **how warp size interacts with memory coalescing** (the example you just asked about)?
+```
+
+Calculation model in GPU
+![Streaming Multiprocessor](images/streaming_multiprocessors.png)
+![GPU](images/gpu.png)
+![Memory](images/memory.png)
+Concept of Block Warp Thread
+Concept of Shared memory L1 L2 cache
+
+## Lecture 5
+
+### Preview 
+
+### Summary  
+This session covers the implementation and performance analysis of a Multi-Layer Perceptron (MLP) using PyTorch. The course material explores building an MLP with multiple layers combining linear transformations and GeLU activations. Emphasis is placed on GPU acceleration, profiling with CUDA NVTX, and optionally including optimizer steps such as Adam for training. The logical flow begins by defining the MLP model class, then running the model on CPU or GPU depending on availability, including forward and backward passes, and optionally weight updates, followed by profiling for performance measurements.
+
+### Key Concepts  
+- Multi-Layer Perceptron (MLP) architecture: stacked linear layers with GeLU activation.  
+- GPU acceleration with torch.device and CUDA support checking.  
+- Performance profiling using CUDA NVTX ranges for layer-wise and step-wise analysis.  
+- Forward and backward passes in neural network training.  
+- Usage of Adam optimizer for weight updates in training loops.  
+- Warmup iterations to stabilize performance before profiling.  
+
+### Guiding Questions  
+1. Why is GeLU activation used in an MLP instead of other activations like ReLU?  
+2. How does CUDA NVTX profiling help in optimizing neural network performance?  
+3. What if the model was run without warmup iterations before profiling—how could that affect performance measurement?
+
+### Warm-up  
+**Q1**: What does the `get_device` function do in the code?  
+- A) Initializes model weights  
+- B) Chooses GPU if available, otherwise CPU  
+- C) Runs the optimizer step  
+- D) Applies GeLU activation  
+**A1**: B) Chooses GPU if available, otherwise CPU
+
+**Q2**: Fill in the blank: In the `MLP` class, the activation function applied after each linear layer is ______.  
+**A2**: GeLU
+
+**Q3**: Short answer: What is the purpose of calling `optimizer.zero_grad()` or `model.zero_grad(set_to_none=True)` in the training loop?  
+**A3**: To reset the gradients of all model parameters to zero before computing new gradients during backpropagation, preventing gradient accumulation from previous steps.
+
+[1](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/64362196/30cb6b40-6e94-495d-892f-2388e5a08c93/lecture_06_mlp.py)
+
+### Review
+
+# CS336 Lecture 6: Active Recall & Transfer Review
+
+### 1. Quick Quiz  
+**Q1** What are the three granularities of parallel execution in CUDA, from largest to smallest?  
+**A1** Blocks ↔ Warps ↔ Threads.  
+
+**Q2** Explain **arithmetic intensity** and why it matters on GPUs.  
+**A2** Arithmetic intensity is the ratio of floating-point operations performed to bytes of memory moved. High arithmetic intensity ensures compute is not memory-bound, maximizing GPU throughput.  
+
+**Q3** Describe the two key differences in design goals between CPUs and GPUs.  
+**A3** CPUs optimize for low latency (finish individual tasks quickly); GPUs optimize for high throughput (finish many tasks in aggregate).  
+
+**Q4** Why can simple Python print statements dramatically affect GPU performance measurements?  
+**A4** Printing induces implicit `cudaSynchronize()` calls, stalling the GPU–CPU queue, altering execution overlap and skewing profiling results.  
+
+**Q5** What is **kernel fusion**, and how does it improve performance?  
+**A5** Kernel fusion combines multiple small operations (e.g., tanh + exp in GELU) into one CUDA kernel, reducing global-memory traffic and synchronization overhead.  
+
+***
+
+### 2. Concept Network  
+- **GPU Architecture** ↔ **SM (Streaming Multiprocessor)** ↔ **SP (Streaming Processor Units)**  
+- **SM** ↔ **Blocks** ↔ **Warps** ↔ **Threads**  
+- **Memory Hierarchy** ↔ **Registers/Shared Memory** (fastest) ↔ **L1 Cache** ↔ **L2 Cache/Global DRAM** (slowest)  
+- **Arithmetic Intensity** ↔ **Compute-Bound Operations** (e.g., matmul) vs. **Memory-Bound Operations**  
+- **Kernel Fusion** ↔ **Reduced Global Memory Traffic** ↔ **Higher Throughput**  
+- **Recomputation** ↔ **Extra FLOPs** ↔ **Avoid Memory Access**  
+- **Profiling** ↔ **CUDA Kernel Launch Overhead** ↔ **Kernel Execution Time** ↔ **Synchronization Costs**  
+- **Compiler Tricks** (e.g., Torch Compile) ↔ **Automatic Fusion & Optimization**  
+
+***
+
+### 3. Pitfalls  
+1. **Confusing Latency vs. Throughput**: Assuming GPUs are “fast at everything,” ignoring that individual thread latency is often worse than CPUs.  
+2. **Ignoring Memory Hierarchy**: Accessing global memory in inner loops without using shared memory or registers leads to severe under-utilization.  
+3. **Over-profiling on CPU**: Forgetting that Python–CUDA dispatch is asynchronous; measuring without explicit `cudaSynchronize()` gives meaningless timings.  
+4. **Unbounded Kernel Queues**: Not understanding the default GPU command queue depth can hide true bottlenecks, as the CPU can run far ahead of GPU execution.  
+5. **Excessive Data Movement**: Failing to fuse operations or use recomputation, leading to repeated loads/stores and memory stalls.  
+
+***
+
+### 4. Micro-Application  
+**Task:**  
+Implement a **fused GELU** nonlinearity kernel in Triton that computes  
+$$
+\mathrm{GELU}(x) = x \,\tfrac{1}{2}\bigl(1 + \tanh\bigl(\sqrt{2/\pi}(x + 0.044715\,x^3)\bigr)\bigr)
+$$  
+for a 1D input tensor of size 2¹⁰⁰⁰. Measure and compare its throughput against PyTorch’s default GELU.
+
+**Hints / Sample Solution:**  
+- **Kernel Fusion**: Write a single Triton kernel that loads input from global memory into registers, computes the tanh/exponential combination, and writes output back.  
+- **Block Configuration**: Choose a block size (e.g., 1024) and ensure grid covers the entire tensor.  
+- **Use Shared Memory**: Although not strictly necessary here, ensure coalesced loads/stores.  
+- **Profiling**: Wrap your Triton call with `torch.cuda.synchronize()` before and after timing to get accurate GPU-only runtimes.  
+- **Benchmark**: Compare `time.time()` or `torch.cuda.Event()` measurements for Triton vs. `torch.nn.functional.gelu` on the same device.
+
+[1](https://www.youtube.com/watch?v=6OBtO9niT00)
+[2](https://www.youtube.com/watch?v=E8Mju53VB00)
+[3](https://www.youtube.com/watch?v=8BmSwUI0zbI)
+[4](https://cs336.stanford.edu)
+[5](https://stanford-cs336.github.io/spring2025-lectures/?trace=var%2Ftraces%2Flecture_01.json)
+[6](https://github.com/stanford-cs336/spring2024-lectures)
+[7](https://www.bilibili.com/video/BV1ZNVAzXEtP/)
+[8](https://www.youtube.com/playlist?list=PLoROMvodv4rOY23Y0BoGoBGgQ1zmU_MT_)
+[9](https://www.linkedin.com/posts/shashank-gaur3099_cs336-language-modeling-from-scratch-activity-7318021150490382336-B4uq)
+
+### Note
+https://github.com/triton-lang/triton
+
+relationship between PTX CUDA Triton Torch
+
+nvtx nsight nsys
+
+## Lecture 7
+### Preview
+### Summary  
+Lecture 7 of CS336 examines the challenges and strategies for **scaling large language model (LLM) training** beyond a single GPU. It begins by quantifying the compute and memory limits of individual GPUs and motivates the need for multi-GPU, multi-node solutions. The lecture then introduces fundamental collective communication primitives (All-Reduce, Reduce-Scatter, All-Gather, Broadcast) and shows how they underlie distributed training. It proceeds to survey three major parallelism paradigms—**data parallelism** (with ZeRO stages 1–3/FSDP), **model parallelism** (pipeline and tensor/sequence parallelism), and **activation parallelism**—detailing their mechanics, trade-offs, and when each is most effective. Finally, it presents **“3D parallelism”** rules of thumb for combining tensor, pipeline, and data parallelism, illustrates large-scale training results (e.g., Narayanan 2021), and highlights practical considerations such as network topology, activation recomputation, and failure rates at extreme scale.
+
+### Key Concepts  
+- **Compute & Memory Scaling Limits**: Single-GPU peak flops growth vs. exploding model sizes exceeds memory.  
+- **Collective Communications**: All-Reduce, Reduce-Scatter, All-Gather, Broadcast primitives drive synchronization.  
+- **Data Parallelism & ZeRO**: Naïve DDP copies full model; ZeRO 1–3 progressively shard optimizer state, gradients, and parameters to reduce memory overhead.  
+- **Model Parallelism**:  
+  - *Pipeline Parallelism*: Splits depth across GPUs using micro-batches to trade bubbles vs. memory.  
+  - *Tensor Parallelism*: Splits tensor operations across GPUs with all-reduce on partial results.  
+  - *Sequence Parallelism*: Further shards activation-heavy pointwise ops along sequence axis to scale activation memory.  
+- **Activation Memory Strategies**: Activation checkpointing (recomputation) vs. sequence parallelism to manage quadratic attention cost.  
+- **3D Parallelism**: Combining tensor (intra-node), pipeline (inter-node), and data parallelism (global) for near-linear scaling.  
+- **Practical Insights**: Optimal tensor parallel size (~8 GPUs), importance of network latency/bandwidth ordering (TP→CP→PP→DP), and hardware failure considerations at >400B-parameter scale.
+
+### Guiding Questions  
+1. **Why** is ZeRO stage 3 (FSDP) more memory-efficient than naïve data parallelism, and what communication overhead does it introduce?  
+2. **How** do pipeline and tensor parallelism complement each other when combined in a 3D parallelism strategy?  
+3. **What-if** you have a limited network bandwidth but abundant GPU memory—how would you choose and configure your parallelism scheme?
+
+### Warm-up  
+**Q1 (Multiple Choice, ~2 min):**  
+Which primitive(s) can implement an All-Reduce operation?  
+A. Broadcast followed by Reduce-Scatter  
+B. Reduce-Scatter followed by All-Gather  
+C. Two Broadcasts  
+D. All-Gather followed by Reduce-Scatter  
+**A1:** B. An All-Reduce can be implemented as Reduce-Scatter (to shard summation) then All-Gather (to distribute results).
+
+**Q2 (Fill-in-the-Blank, ~1 min):**  
+ZeRO stage 1 shards only the ___________ across GPUs, while keeping full model parameters and gradients on each GPU.  
+**A2:** optimizer state
+
+**Q3 (Short Answer, ~3 min):**  
+Describe one advantage and one drawback of pipeline parallelism compared to tensor parallelism.  
+**A3:**  
+- Advantage: Saves memory by splitting layers, with communication only on activations rather than full parameters.  
+- Drawback: Under-utilization (“bubbles”) unless micro-batches are large enough, leading to idle GPU time.
+
+[1](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/64362196/f3421d09-dca7-424e-a9c3-ae6f56427a94/2025-Lecture-7-Parallelism-basics.pdf)
+
+### Review
+### 1. Quick Quiz
+
+**Q1** Calculate the memory per parameter for a model trained with Adam optimizer in mixed precision (BF16 parameters, FP32 master weights). How much memory would a 7B parameter model require on a single GPU?
+**A1** 12 bytes per parameter (2B BF16 params + 2B BF16 gradients + 4B FP32 master + 4B FP32 Adam first moment + 4B FP32 Adam second moment). 7B × 12 = 84GB, which exceeds most single GPU memory.
+
+**Q2** In the bandwidth-limited regime, what's the communication cost difference between naïve data parallelism and ZeRO stage 1?
+**A2** Both cost 2× #parameters. ZeRO stage 1 is "free" communication-wise since it uses reduce-scatter + all-gather instead of all-reduce, but achieves memory savings by sharding optimizer states.
+
+**Q3** Why does pipeline parallelism require large batch sizes to be effective?
+**A3** Pipeline utilization = 1 - (n_stages-1)/n_microbatches. With small batches, the "bubble time" dominates useful compute time, leading to poor GPU utilization.
+
+**Q4** What happens to activation memory under tensor parallelism with sequence length s, batch size b, and hidden size h?
+**A4** The 34sbh terms (LayerNorm, Dropout, attention/MLP inputs) remain unsplit and become the bottleneck, while only the matrix multiplication activations get reduced by the tensor parallel factor.
+
+**Q5** In 3D parallelism, why is the typical ordering TP → CP → PP → DP from innermost to outermost?
+**A5** It matches network bandwidth/latency requirements: TP needs highest bandwidth (intra-node), PP tolerates higher latency (inter-node), DP can be most asynchronous (global).
+
+### 2. Concept Network
+
+- **Memory Scaling** ↔ **ZeRO Stages**: Progressive sharding reduces memory overhead from 12×params to 12×params/N_gpus
+- **ZeRO Stage 3** ↔ **FSDP**: Same underlying technique with incremental parameter loading/freeing
+- **Pipeline Parallelism** ↔ **Micro-batches**: Large batch sizes essential to hide bubble overhead
+- **Tensor Parallelism** ↔ **High-Speed Interconnects**: Requires low-latency, high-bandwidth (NVLink) due to frequent all-reduces
+- **Activation Memory** ↔ **Sequence Parallelism**: Splits pointwise ops (LayerNorm, Dropout) along sequence dimension
+- **Communication Primitives** ↔ **All Parallelism Types**: All-reduce, reduce-scatter, all-gather underlie synchronization
+- **3D Parallelism** ↔ **Network Topology**: TP within nodes, PP across nodes, DP globally matches hardware constraints
+- **Model Size Scaling** ↔ **Linear Memory Requirement**: Goal is memory/compute/communication all scale linearly with #GPUs
+
+### 3. Pitfalls
+
+1. **Confusing Communication Costs**: Students often think ZeRO stage 3 is "3× more expensive" than naïve DP, but miss that in bandwidth-limited regimes, the 50% overhead (3× vs 2×) may be acceptable for massive memory savings.
+
+2. **Pipeline Utilization Misconceptions**: Assuming pipeline parallelism is always bad due to bubbles, without recognizing that with sufficient micro-batches and when memory is the constraint, it enables training larger models that wouldn't fit otherwise.
+
+3. **Tensor Parallel Scaling Limits**: Thinking tensor parallelism can scale indefinitely, but it hits diminishing returns due to increasing communication overhead (scales as 8sbh × (n_devices-1)/n_devices) and typically caps at 8 GPUs.
+
+4. **Activation Memory Oversight**: Focusing only on parameter memory scaling while ignoring that activation memory (34sbh per layer) can dominate for large sequence lengths, requiring sequence parallelism or checkpointing.
+
+5. **Network-Agnostic Parallelism**: Choosing parallelism strategies without considering network topology—using tensor parallelism across slow inter-node links or pipeline parallelism within fast intra-node connections.
+
+### 4. Micro-Application
+
+**Task:** You're tasked with training a 20B parameter Transformer model on 64 A100-80GB GPUs arranged in 8 nodes of 8 GPUs each. Your training data allows flexible batch sizes, and you want to maximize throughput while ensuring the model fits in memory.
+
+Given constraints:
+- Intra-node: NVLink (high bandwidth, low latency)  
+- Inter-node: InfiniBand (moderate bandwidth, higher latency)
+- Target sequence length: 2048
+- Mixed precision training (BF16/FP32)
+
+Design your parallelism strategy by answering:
+1. What tensor parallelism size would you choose and why?
+2. How many pipeline stages would you need?
+3. What would be your data parallelism degree?
+4. Estimate if you need sequence parallelism for activation memory.
+
+**Hints / Sample Solution:**
+1. **TP = 8** (one per node, utilizing fast NVLink)
+2. **PP = 8** (across 8 nodes via slower InfiniBand, 20B params likely need multiple stages to fit)  
+3. **DP = 1** (64 GPUs / 8 TP / 8 PP = 1)
+4. **Sequence Parallelism**: Likely needed since activation memory ≈ 34sbh per layer ≈ 34 × 2048 × batch_size × 4096 can be substantial
+
+**Memory Check**: With ZeRO stage 1 + TP=8, each GPU handles ~2.5B params × 5 bytes (optimizer state split) ≈ 12.5GB parameters + activations. This should fit in 80GB with room for activations and sequence parallelism if needed.
+
+**Throughput Optimization**: Use gradient accumulation to increase effective batch size and hide pipeline bubbles, aiming for >90% pipeline utilization.
+## Note
+
+![multi machine](images/multi_machine.png)
+```
+This figure shows the architecture of a multi-GPU, multi-CPU high-performance computing (HPC) system, combining different interconnect technologies: PCIe, NVLink, and InfiniBand. Let’s break it down step by step:
+
+---
+
+### **Top Level: CPUs**
+
+* Two CPUs are shown: **CPU₀** and **CPU₁**.
+* They are connected via **xGMI-2** (16 GT/s per lane), which is AMD’s socket-to-socket interconnect, similar in purpose to Intel’s UPI.
+* Each CPU also connects to GPUs and HCAs through **PCI Express 4.0** (16 GT/s per lane).
+
+---
+
+### **Middle Layer: HCAs and PLX**
+
+* **HCA (Host Channel Adapter):**
+
+  * These are the network interface cards for InfiniBand.
+  * They handle the connection to **HDR InfiniBand** (50 GT/s per lane).
+  * In the figure: HCA₀–HCA₃ connect the system to InfiniBand switches (Switch₀, Switch₁).
+  * Their job: move data between the GPU/CPU system and the larger HPC cluster over InfiniBand.
+
+* **PLX (PCIe Switch / Bridge):**
+
+  * PLX is a common brand of PCIe switch chips (now Broadcom).
+  * These expand the number of PCIe lanes so multiple GPUs/HCAs can share a CPU’s PCIe root complex.
+  * In the diagram, PLX chips fan out the CPU’s PCIe lanes to multiple GPUs and HCAs.
+
+---
+
+### **Bottom Layer: GPUs and NVSwitches**
+
+* **GPUs:** There are 8 GPUs (GPU₀–GPU₇).
+* Each GPU connects upward via PCIe (to PLX → CPU) and sideways via **NVLink 3.0** (400 GT/s per lane) into **NVSwitch fabric**.
+* **NVSwitch:** Specialized crossbar switches from NVIDIA that allow *all-to-all* GPU communication at NVLink speeds.
+
+  * Each GPU has multiple NVLink connections into the NVSwitch mesh, giving full-bandwidth peer-to-peer communication.
+
+---
+
+### **Interconnect Summary**
+
+1. **CPU ↔ CPU**: xGMI-2 (socket-to-socket).
+2. **CPU ↔ GPU / HCA**: PCIe Gen4 (16x links).
+3. **GPU ↔ GPU**: NVLink via NVSwitch fabric.
+4. **System ↔ Cluster**: HDR InfiniBand via HCAs.
+
+---
+
+✅ **In short:**
+
+* **HCA** = InfiniBand network adapter, for cluster-scale communication.
+* **PLX** = PCIe switch chip, used to fan out PCIe lanes so more GPUs/HCAs can connect to the CPU.
+* **NVSwitch** = NVIDIA’s GPU interconnect switch for high-bandwidth all-to-all GPU communication.
+
+Would you like me to also **compare the bandwidth hierarchy** (e.g., PCIe vs NVLink vs InfiniBand) in terms of aggregate throughput for this system?
+```
+
+![collective operation](images/collective_operation.png)
+
+DP
+
+Memory cost, using ZeRO to preserve the optimizer states to reduce the memory cost
+
+Parameters and Gradients in each GPU
+
+```
+Great — this figure is explaining **collective communication primitives** in distributed computing (used heavily in distributed deep learning with MPI, NCCL, Horovod, etc.). These are the basic operations for moving and combining data across multiple workers (here labeled as *ranks 0–3*). Let’s go one by one:
+
+---
+
+### **1. All Reduce (top left)**
+
+* Each rank starts with its own input: in0, in1, in2, in3.
+* Operation: perform a **reduction** (e.g., sum) across all inputs, then distribute the result back to **all ranks**.
+* Result: every rank ends up with the same combined value (sum of all ranks’ inputs).
+* Formula: `out[i] = sum(inX[i])` for all ranks.
+  👉 Example: used for gradient averaging in data-parallel training.
+
+---
+
+### **2. Reduce (top right)**
+
+* Each rank contributes its input (in0, in1, in2, in3).
+* Operation: reduce them (e.g., sum) into a single output **only on the root rank** (here rank 2).
+* Result: only the root rank gets the final reduced value; others don’t.
+* Formula: `out[i] = sum(inX[i])` (only stored at root).
+  👉 Example: used when only one process needs the aggregated result.
+
+---
+
+### **3. Broadcast (bottom left)**
+
+* One root rank (here rank 2) has an input value.
+* Operation: send that same value to **all ranks**.
+* Result: every rank gets the identical value from the root.
+  👉 Example: distributing the model parameters from one rank to all others.
+
+---
+
+### **4. All Gather (middle right)**
+
+* Each rank starts with a different piece of input (in0, in1, in2, in3).
+* Operation: collect all inputs from all ranks and share them with everyone.
+* Result: every rank ends up with the full list \[in0, in1, in2, in3].
+  👉 Example: useful when each process computes a partial result and everyone needs the whole dataset.
+
+---
+
+### **5. Reduce Scatter (bottom right)**
+
+* Each rank starts with its input (in0, in1, in2, in3).
+* Operation: reduce them across ranks (like sum), then scatter portions of the result to different ranks.
+* Result: each rank ends up with a **different piece** of the reduced output.
+  👉 Example: when splitting work after a global reduction, e.g., sharded gradient accumulation.
+
+Reduce Scatter only caculate the rank itself data? No, it actually do it to all the data like reduce but than scatter to other nodes.
+
+---
+
+### ✅ **Summary**
+
+* **All Reduce** → Everyone gets the reduced result.
+* **Reduce** → Only the root gets the reduced result.
+* **Broadcast** → Root sends its data to everyone.
+* **All Gather** → Everyone collects everyone else’s data.
+* **Reduce Scatter** → Combine data across ranks, then split among them.
+
+These five primitives form the backbone of **synchronous distributed training** (especially All Reduce for gradient synchronization).
+
+Do you want me to also **draw the connection between these operations and PyTorch’s `torch.distributed` APIs (like `all_reduce`, `broadcast`, etc.)** so you see how this maps directly to deep learning training?
+
+```
+
+```
+Good question — this is a **classic confusion** when first learning distributed data parallelism (DP). Let’s carefully unpack it 👇
+
+---
+
+## 🔹 Intuition
+
+* You have **M GPUs**, each computing gradients of size **#params**.
+* At first glance, it feels like each GPU must send its gradients to **all the other M–1 GPUs**, which would indeed be about `M × #params` communication per GPU.
+* But in practice, we **don’t do naive "everyone-send-to-everyone"**. Instead, we use **collective communication algorithms** (e.g., *all-reduce*), which are designed to minimize overhead.
+
+---
+
+## 🔹 What Really Happens (All-Reduce)
+
+All-reduce computes the **sum (or average) of gradients** across all GPUs, then distributes the result back to each GPU.
+
+Efficient algorithms (like **ring all-reduce** or **tree-reduce**) ensure:
+
+* Each GPU **only sends/receives about 2 × #params of data**, regardless of M.
+* The cost scales with **#params**, not with M.
+
+---
+
+## 🔹 Why Not M × #params?
+
+Let’s take **Ring All-Reduce** (used by NCCL, Horovod, etc.) as an example:
+
+1. The gradient tensor is divided into **M chunks**.
+2. GPUs form a logical ring.
+3. In the **reduce-scatter phase**:
+
+   * Each GPU sends one chunk to its neighbor and receives one from the other neighbor.
+   * As data circulates, partial sums are accumulated.
+   * After M–1 steps, each GPU has one chunk of the *final reduced gradient*.
+4. In the **all-gather phase**:
+
+   * The chunks are broadcast around the ring so that every GPU gets the full gradient.
+   * After another M–1 steps, each GPU has the complete reduced gradient.
+
+👉 In total:
+
+* Each GPU **sends and receives 2 × (1/M) × #params × (M–1) ≈ 2 × #params**.
+* This is independent of M (ignoring small constants).
+
+---
+
+## 🔹 Key Takeaway
+
+* **Naive view**: “Each GPU must send to all others → M × #params”.
+* **Optimized collectives**: Communication is structured → only **\~2 × #params per GPU**.
+* That’s why the slide says “2 × #params” and not “M × #params”.
+
+---
+
+✅ **Summary**
+
+* Gradient size = `#params`.
+* Using efficient collectives (ring/tree all-reduce), each GPU sends ≈ `#params` and receives ≈ `#params`.
+* Total ≈ `2 × #params per GPU per iteration`, *not* `M × #params`.
+
+---
+
+Would you like me to **draw a step-by-step diagram of Ring All-Reduce with 4 GPUs** so you can *see exactly* why it’s 2× and not M×?
+
+```
+
+Collective communication
+https://huggingface.co/spaces/nanotron/ultrascale-playbook?section=data_parallelism
+https://nanotron-ultrascale-playbook.static.hf.space/index.html?utm_source=chatgpt.com#broadcast
+https://huggingface.co/docs/transformers/en/perf_train_gpu_many?utm_source=chatgpt.com
+
+## Lecture 8
+
+## Preview
+
+Based on the comprehensive information gathered, I can now create a detailed Course Preview for CS336 Lecture 8.
+
+## Course Preview: CS336 Lecture 8
+
+### Summary
+
+**CS336 Lecture 8: Parallelism 2** focuses on distributed training and multi-GPU parallelism strategies for large language models. The session builds upon the previous week's single-GPU parallelism concepts and extends them to multi-GPU and multi-node environments. The lecture follows a unifying theme of orchestrating computation to avoid data transfer bottlenecks, transitioning from reducing memory accesses through fusion/tiling (single GPU) to reducing communication across GPUs/nodes through replication and sharding strategies.[1]
+
+The session is structured into two main parts: **building blocks of distributed communication/computation** and **distributed training strategies**. The first part covers collective operations, PyTorch distributed implementation (NCCL), and practical benchmarking. The second part provides bare-bones implementations of three fundamental parallelism strategies using deep MLPs as representative models since they constitute the compute bottleneck in Transformers.[1]
+
+The logical flow progresses from conceptual foundations (collective operations) to hardware understanding (NVLink, NVSwitch) to practical implementation (data, tensor, and pipeline parallelism), culminating in hands-on code demonstrations that students can execute and modify.
+
+### Key Concepts
+
+- **Collective Operations**: Broadcast, scatter, gather, reduce, all-gather, reduce-scatter, and all-reduce primitives for distributed programming[1]
+- **Hardware Hierarchy**: Understanding the memory/communication hierarchy from L1 cache to multi-node interconnects (NVLink, NVSwitch)[1]
+- **NVIDIA Collective Communication Library (NCCL)**: Low-level packet communication between GPUs with topology optimization[1]
+- **Data Parallelism**: Sharding data across ranks while replicating model parameters, using all-reduce for gradient synchronization[1]
+- **Tensor Parallelism**: Sharding model parameters across ranks while broadcasting activations via all-gather operations[1]
+- **Pipeline Parallelism**: Distributing layers across ranks with micro-batching to minimize pipeline bubbles[1]
+- **Communication Patterns**: Point-to-point vs collective communication, synchronous vs asynchronous operations[1]
+- **Bandwidth Analysis**: Measuring effective communication bandwidth and understanding bottlenecks[1]
+
+### Guiding Questions
+
+1. **Why does the memory hierarchy (from L1 cache to multi-node networks) dictate different parallelism strategies, and how do communication costs scale differently at each level?**
+
+2. **How do the three parallelism strategies (data, tensor, pipeline) trade off between computation efficiency, communication overhead, and memory requirements for different model architectures?**
+
+3. **What if you needed to combine multiple parallelism strategies for a trillion-parameter model - how would you design a hybrid approach that minimizes the total training time while respecting hardware constraints?**
+
+### Warm-up
+
+**Q1** (Multiple Choice): In data parallelism, what operation is used to synchronize gradients across all ranks?
+A) All-gather  
+B) Reduce-scatter  
+C) All-reduce  
+D) Broadcast
+
+**A1** C) All-reduce. In data parallelism, each rank computes gradients on its local data slice, then all-reduce averages these gradients across all ranks so that each rank has the same gradient values for parameter updates.[1]
+
+**Q2** (Fill-in-the-blank): The effective bandwidth of all-reduce can be calculated as _______ bytes divided by _______ duration, where the bytes sent equals tensor size × 2 × (world_size - 1).
+
+**A2** sent; total. The formula accounts for both sending input and receiving output (hence 2×), and the total duration is world_size × individual_duration since all ranks participate simultaneously.[1]
+
+**Q3** (Short Answer): Explain why pipeline parallelism uses micro-batches and what problem this solves.
+
+**A3** Pipeline parallelism breaks the batch into smaller micro-batches to minimize pipeline bubbles - periods where some ranks are idle waiting for data. By having multiple micro-batches in flight simultaneously, ranks can stay busy processing different micro-batches at different pipeline stages, improving overall utilization and reducing the sequential dependency bottleneck.[1]
+
+[1](https://stanford-cs336.github.io/spring2025-lectures/var/traces/lecture_08_stdout.txt)
+[2](https://www.youtube.com/watch?v=6OBtO9niT00)
+[3](https://www.youtube.com/watch?v=SQ3fZ1sAqXI)
+[4](https://dhyeymavani.com/teaching/stanford-cs336-language-modeling-from-scratch/)
+[5](https://cs336.stanford.edu)
+[6](https://www.youtube.com/watch?v=RQowiOF_FvQ)
+[7](https://www.cs.toronto.edu/~cmaddis/courses/csc2541_w25/)
+[8](https://github.com/stanford-cs336/spring2025-lectures)
+[9](https://www.youtube.com/watch?v=Rvppog1HZJY)
+[10](https://www.youtube.com/watch?v=LHpr5ytssLo)
+[11](https://www.youtube.com/watch?v=ptFiH_bHnJw)
+[12](https://www.reddit.com/r/StableDiffusion/comments/1kw5f2p/looking_for_2_people_to_study_kaists_diffusion/)
+[13](https://cs230.stanford.edu/syllabus/)
+[14](https://www.reddit.com/r/learnmachinelearning/comments/1lxgabn/stanfords_cs336_2025_language_modeling_from/)
+[15](https://stanford-cs336.github.io)
+[16](https://www.youtube.com/watch?v=l1RJcDjzK8M)
+[17](https://automation.jp/research-report/2025-05-02-2025-05-02-stanford-cs336-language-modeling-from-scratch-gpu-mysteries-to-flash-attention-complete-optimization-guide)
+[18](https://stanford-cs336.github.io/spring2025-lectures/?trace=var%2Ftraces%2Flecture_01.json)
+[19](https://www.youtube.com/playlist?list=PLoROMvodv4rOY23Y0BoGoBGgQ1zmU_MT_)
+[20](https://github.com/stanford-cs336)
+[21](https://crfm.stanford.edu/2023/06/16/levanter-1_0-release.html)
+[22](https://en.wikipedia.org/wiki/Collective_operation)
+[23](https://en.wikipedia.org/wiki/PCI_Express)
+[24](https://www.nvidia.com/en-us/data-center/nvlink/)
+[25](https://resources.nvidia.com/en-us-tensor-core/nvidia-tensor-core-gpu-datasheet)
+[26](https://guide.ncloud-docs.com/docs/en/server-baremetal-a100-check-vpc)
+[27](https://www.nvidia.com/en-us/on-demand/session/gtcspring21-s31880/)
+[28](https://pytorch.org/docs/stable/distributed.html)
+[29](https://github.com/NVIDIA/nccl-tests/blob/master/doc/PERFORMANCE.md#allreduce)
+[30](https://github.com/stas00/ml-engineering/blob/master/network/benchmarks/all_reduce_bench.py)
+
+## Review
+
+Based on my analysis of CS336 Lecture 8 content, here's your Active Recall & Transfer Review:
+
+## Active Recall & Transfer Review: CS336 Lecture 8
+
+### 1. Quick Quiz
+
+**Q1** What's the key difference between reduce-scatter and all-reduce in terms of memory usage per rank?
+**A1** Reduce-scatter outputs only 1/world_size of the data per rank (distributed result), while all-reduce outputs the full aggregated result on every rank. This makes reduce-scatter more memory-efficient for large tensors.[1]
+
+**Q2** In tensor parallelism, why do you need all-gather after each layer computation?
+**A2** Because each rank only computes a slice of the activations (local_num_dim), but the next layer needs the full activation tensor (num_dim) as input. All-gather reconstructs the complete activation from all rank slices.[1]
+
+**Q3** Calculate the effective bandwidth if 4 GPUs perform all-reduce on a 100MB tensor in 10ms total.
+**A3** Sent bytes = 100MB × 2 × (4-1) = 600MB. Total duration = 4 × 10ms = 40ms. Bandwidth = 600MB / 40ms = 15 GB/s.[1]
+
+**Q4** Why does pipeline parallelism send/receive between adjacent ranks rather than broadcasting?
+**A4** Pipeline parallelism maintains the sequential layer dependency - rank 0 processes layers 0-1, rank 1 processes layers 2-3, etc. Data flows sequentially through the pipeline, so each rank only needs output from the previous rank.[1]
+
+**Q5** What happens to gradient synchronization in tensor parallelism compared to data parallelism?
+**A5** In tensor parallelism, gradients are naturally distributed across ranks (each rank has different parameter slices), so you need reduce-scatter to aggregate gradients, not all-reduce like in data parallelism where all ranks have identical parameters.[1]
+
+### 2. Concept Network
+
+- **Collective Operations** ↔ **NCCL Library** (implementation layer)
+- **All-reduce** ↔ **Reduce-scatter + All-gather** (mathematical equivalence)
+- **Data Parallelism** ↔ **All-reduce Gradients** (synchronization method)
+- **Tensor Parallelism** ↔ **All-gather Activations** (reconstruction method)
+- **Pipeline Parallelism** ↔ **Micro-batches** (bubble minimization)
+- **Communication Bandwidth** ↔ **Hardware Hierarchy** (NVLink > PCIe > Ethernet)
+- **Memory Hierarchy** ↔ **Parallelism Strategy** (dictates approach)
+- **World Size** ↔ **Communication Overhead** (scaling relationship)
+- **Synchronous Operations** ↔ **async_op=False** (blocking behavior)
+- **Hardware Topology** ↔ **NCCL Optimization** (automatic path finding)
+
+### 3. Pitfalls
+
+1. **Confusing all-reduce with reduce-scatter**: Students often think all-reduce is always better, but reduce-scatter is more memory-efficient when you don't need the full result on every rank. All-reduce = reduce-scatter + all-gather, so it uses 2x the communication.[1]
+
+2. **Forgetting torch.cuda.synchronize() in benchmarks**: CUDA operations are asynchronous by default. Without synchronization, timing measurements will be incorrect because the timer stops before GPU kernels finish executing.[1]
+
+3. **Misunderstanding tensor parallelism memory savings**: Students expect tensor parallelism to reduce memory by 1/world_size, but activations are still replicated across all ranks via all-gather. Only parameters are sharded, not activations.[1]
+
+4. **Pipeline bubble misconception**: Thinking micro-batches eliminate bubbles entirely. They only minimize bubbles - there's still idle time at the beginning and end of the pipeline. Perfect utilization requires infinite micro-batches.[1]
+
+5. **Bandwidth calculation errors**: Incorrectly calculating sent_bytes in all-reduce (forgetting the 2x factor for bidirectional communication) or total_duration (forgetting to multiply by world_size for aggregate time).[1]
+
+### 4. Micro-Application
+
+**Task:** Design a hybrid parallelism strategy for training a 12-layer Transformer with 8 GPUs, where layers have different computational costs:
+- Layers 0-3: 100ms each
+- Layers 4-7: 200ms each  
+- Layers 8-11: 150ms each
+
+Your batch size is 64, and you want to minimize total training time. Choose between data parallelism (DP), tensor parallelism (TP), or pipeline parallelism (PP), and specify the configuration.
+
+**Hints / Sample Solution:**
+- **Analysis**: Total compute = (4×100) + (4×200) + (4×150) = 1800ms per forward pass
+- **Strategy**: Use 2-way pipeline parallelism + 4-way data parallelism
+  - Pipeline stage 0 (GPUs 0-3): Layers 0-5 (600ms) with 4-way DP
+  - Pipeline stage 1 (GPUs 4-7): Layers 6-11 (700ms) with 4-way DP
+- **Micro-batches**: Use 4 micro-batches (16 samples each) to minimize pipeline bubble
+- **Rationale**: 
+  - Pure DP would take 1800ms/8 = 225ms per step
+  - Pure PP (8 stages) would have large bubbles due to uneven layer costs
+  - Hybrid approach balances pipeline stages (~650ms each) while maintaining DP benefits
+  - Communication: All-reduce gradients within each DP group (4 GPUs), point-to-point between pipeline stages
+- **Expected speedup**: ~3.5x over single GPU, accounting for communication overhead and pipeline bubbles
+
+[1](https://stanford-cs336.github.io/spring2025-lectures/var/traces/lecture_08_stdout.txt)
+
+## Lecture 9
+
+## Preview
+
+### Summary
+
+**CS336 Lecture 9: Scaling Laws - Basics** provides a comprehensive introduction to scaling laws in machine learning, particularly for large language models. The lecture addresses a fundamental practical question: given substantial computational resources (like "ten thousand H100s for a month"), how should one optimally design and train large language models?
+
+The session follows a logical progression from theoretical foundations to practical applications:
+
+**Part 1** establishes the historical context and theoretical underpinnings of scaling laws, tracing their evolution from early statistical learning theory (1993) through neural machine translation work (Hestness 2017) to modern transformer-based models. The core insight is that performance relationships often follow power laws that appear linear on log-log plots.
+
+**Part 2** dives deep into three critical scaling relationships: (1) **Data vs Performance** - how dataset size affects model accuracy, with power law relationships like Error ∝ n^(-α); (2) **Data vs Model Size** - the optimal balance between collecting more data versus training larger models; and (3) **Hyperparameters vs Performance** - how architectural and training choices can be predicted from small-scale experiments and extrapolated to large models.
+
+The lecture emphasizes that scaling laws enable a revolutionary approach: instead of expensive trial-and-error on large models, researchers can tune hyperparameters on small models and reliably extrapolate to large-scale deployments. Key practical insights include the Chinchilla scaling law (suggesting models should see ~20 tokens per parameter), the diminishing returns of data repetition, and the predictability of architectural choices across scales.[1]
+
+### Key Concepts
+
+- **Power Law Scaling**: Relationships of the form Error ∝ n^(-α) that appear linear on log-log plots
+- **Data Scaling Laws**: How dataset size affects model performance (typically Error ∝ n^(-0.1) for language models)
+- **Joint Data-Model Scaling**: Optimal allocation between data collection and model size (Error = n^(-α) + m^(-β) + C)
+- **Chinchilla Optimal Training**: Models should see approximately 20 tokens per parameter for compute-optimal training
+- **Critical Batch Size**: The point beyond which larger batches provide diminishing returns
+- **IsoFLOP Analysis**: Comparing models with identical computational budgets to find optimal configurations
+- **Extrapolation Principle**: Using small-scale experiments to predict large-scale model behavior
+- **Intrinsic Dimensionality**: Theoretical framework connecting data complexity to scaling exponents
+- **Hyperparameter Scaling**: How choices like optimizer, architecture, and learning rate scale predictably
+- **Train vs Inference Optimization**: Distinction between compute-optimal training and deployment-optimal training
+
+### Guiding Questions
+
+1. **Why do scaling laws consistently exhibit power law behavior across different domains and model architectures, and what does this reveal about the fundamental nature of learning in high-dimensional spaces?**
+
+2. **How should the discovery of scaling laws change our approach to machine learning research methodology, particularly regarding the balance between theoretical understanding and empirical scaling?**
+
+3. **What-if we had perfect scaling law predictions - how would this transform resource allocation decisions in AI development, and what are the potential risks of over-relying on extrapolation?**
+
+### Warm-up
+
+**Q1** (Multiple Choice): According to the Chinchilla scaling law findings, what is the approximately optimal ratio of training tokens to model parameters for compute-efficient training?
+
+A) 2 tokens per parameter (like GPT-3)  
+B) 20 tokens per parameter  
+C) 200 tokens per parameter  
+D) 2000 tokens per parameter
+
+**A1** B) 20 tokens per parameter. The Chinchilla paper found that previous models like GPT-3 (2 tokens/param) were undertrained, and the compute-optimal ratio is around 20 tokens per parameter, though deployment considerations may justify training longer.[1]
+
+**Q2** (Fill-in-the-blank): In a typical data scaling law for language models, the test loss follows the relationship: Loss = ______^(-α) + C, where α is typically around ______ for language modeling tasks.
+
+**A2** Loss = **N**^(-α) + C, where α is typically around **0.1** for language modeling tasks. Here N represents the dataset size, and the exponent α ≈ 0.1 is much smaller than classical statistical learning theory would predict (which suggests α = 0.5).[1]
+
+**Q3** (Short Answer): Explain in 2-3 sentences why scaling laws enable a more efficient approach to hyperparameter tuning compared to traditional methods.
+
+**A3** Scaling laws allow researchers to tune hyperparameters on small, inexpensive models and reliably extrapolate the results to large-scale models, avoiding the prohibitive cost of directly experimenting with large models. This "scale-and-extrapolate" approach can save millions of dollars in compute costs while maintaining prediction accuracy. For example, you can determine whether Transformers outperform LSTMs by training small versions of both architectures and extrapolating their scaling curves.[1]
+
+[1](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/64362196/16a80dc3-b6bc-4610-baf5-93bc13639b61/2025-Lecture-9-Scaling-laws-basics.pdf)
+
+## Review
+
+### 1. Quick Quiz
+
+**Q1** What is the key difference between the scaling law exponents found in classical statistical learning (α ≈ 0.5) versus those observed in neural language models (α ≈ 0.1)?
+
+**A1** Classical statistical learning theory predicts α = 0.5 (Error ∝ n^(-0.5)), corresponding to standard estimation error decay. Neural language models show much slower decay with α ≈ 0.1 (Error ∝ n^(-0.1)), suggesting the intrinsic complexity or dimensionality of language data is much higher than classical models assume. This relates to the "curse of dimensionality" in high-dimensional learning problems.[1]
+
+**Q2** According to the Chinchilla paper, what are the three different methods for determining optimal compute allocation, and which one was potentially flawed?
+
+**A2** The three methods are: (1) **Minimum over runs** - finding the envelope of minimal loss per FLOP across different training curves; (2) **IsoFLOP analysis** - fixing compute budgets and varying model size to find optimal configurations; (3) **Joint parametric fits** - fitting a joint scaling law across the model size-data grid using least squares. Method 3 was potentially flawed due to issues in the original fitting procedure, which subsequent researchers corrected to align better with methods 1 and 2.[1]
+
+**Q3** Why might you want to "overtrain" a model beyond the Chinchilla-optimal point, and what are some real examples of this?
+
+**A3** You should overtrain when inference compute dominates total lifecycle costs. Chinchilla optimizes for training compute efficiency (20 tokens/param), but if a model will be used extensively, the additional training cost is justified by better inference performance. Examples: GPT-3 (2 tokens/param) → LLaMA 65B (22 tokens/param) → Mistral 7B (110 tokens/param) → LLaMA 3 70B (215 tokens/param). The more usage expected, the more overtraining becomes cost-effective.[1]
+
+**Q4** What is the "critical batch size" and how does it relate to model scale and target performance?
+
+**A4** Critical batch size is the point where further increasing batch size provides diminishing returns - defined as the minimum batch size needed to reach a target loss efficiently. Key insights: (1) The smaller the target loss, the larger the critical batch size needed; (2) Critical batch size scales with model performance requirements; (3) Beyond critical batch size, you should prefer more training steps over larger batches. This helps optimize the tradeoff between data parallelism and training efficiency.[1]
+
+**Q5** How do embedding parameters behave differently from other model parameters in scaling laws?
+
+**A5** Embedding parameters don't follow the same scaling relationships as non-embedding parameters. When plotting scaling laws, you should exclude embedding parameters to get clean power-law relationships. This is because embeddings scale with vocabulary size rather than model capacity, and their contribution to model performance follows different dynamics than the core transformer parameters.[1]
+
+### 2. Concept Network
+
+- **Power Law Scaling** ↔ **Log-Log Linearity**: Fundamental mathematical relationship enabling predictable extrapolation
+- **Data Scaling** ↔ **Intrinsic Dimensionality**: Theory connecting dataset complexity to scaling exponents (α ≈ 1/d)
+- **Chinchilla Optimal** ↔ **Compute Budget**: 20 tokens/param ratio for training-compute efficiency
+- **Train-Optimal** ↔ **Inference-Optimal**: Tension between training efficiency vs deployment performance
+- **Critical Batch Size** ↔ **Diminishing Returns**: Point where larger batches become inefficient
+- **IsoFLOP Analysis** ↔ **Resource Allocation**: Method for comparing models with equal compute budgets
+- **Data Repetition** ↔ **Effective Dataset Size**: Diminishing value of repeated examples (D' = UD + UDR(1-e^(-R/R*)))
+- **Small Model Tuning** ↔ **Large Model Prediction**: Core scaling law methodology for hyperparameter selection
+- **Distribution Shift** ↔ **Scaling Offset**: Data composition affects intercept, not slope of scaling laws
+- **Nonparametric Learning** ↔ **Curse of Dimensionality**: Theoretical foundation for dimension-dependent scaling
+
+### 3. Pitfalls
+
+1. **Confusing train-optimal with deployment-optimal**: Students often think Chinchilla's 20 tokens/param ratio is universally optimal, missing that this optimizes training compute, not total lifecycle cost. For heavily-used models, "overtraining" beyond Chinchilla-optimal is economically rational.
+
+2. **Including embedding parameters in scaling calculations**: A common error is using total parameters instead of non-embedding parameters, which breaks the clean power-law relationships since embeddings scale with vocabulary size, not model capacity.
+
+3. **Assuming scaling laws extrapolate infinitely**: Students may over-rely on extrapolation without considering that scaling laws have limits - they break down at very small scales, may change at very large scales, and downstream task performance can be less predictable than pretraining loss.
+
+4. **Misunderstanding the role of data quality vs quantity**: Thinking that scaling laws only apply to raw dataset size, when in reality data composition, quality filtering, and repetition rates all follow their own scaling relationships that must be considered jointly.
+
+5. **Confusing different scaling law methodologies**: Not understanding when to use envelope methods vs IsoFLOP analysis vs joint parametric fits, and not recognizing that different methods can give different results (as seen in the Chinchilla Method 3 controversy).
+
+### 4. Micro-Application
+
+**Task:** You have a compute budget of 10^20 FLOPs and need to decide between two training strategies for a language model:
+- **Strategy A**: Train a 1B parameter model for 1000 epochs on a 100M token dataset
+- **Strategy B**: Train a 10B parameter model for 10 epochs on the same dataset
+
+Using the provided scaling law concepts, determine which strategy is likely to perform better and explain your reasoning. Then propose an improved third strategy.
+
+**Hints / Sample Solution:** 
+
+**Analysis:**
+- Strategy A: 1B params × 100M tokens × 1000 epochs = high repetition, small model
+- Strategy B: 10B params × 100M tokens × 10 epochs = large model, minimal repetition
+
+**Key Considerations:**
+1. **Data repetition scaling**: At 1000 epochs, Strategy A hits severe diminishing returns (recall: at ~40 epochs, repetition becomes worthless)
+2. **Chinchilla principles**: Both strategies are suboptimal - 10B params should see ~200B tokens (20:1 ratio)
+3. **IsoFLOP comparison**: For 10^20 FLOPs budget, neither strategy is on the efficient frontier
+
+**Recommendation - Strategy C:**
+- Collect more diverse data (aim for ~2B tokens minimum)
+- Train a ~5B parameter model for 40-50 epochs
+- This balances model capacity with effective data usage
+- Follows Chinchilla scaling more closely: 5B params × 2B tokens × 40 epochs gives better compute allocation
+
+**Reasoning**: Strategy B is better than A (larger models generally outperform small overtrained ones), but Strategy C optimizes the fundamental tradeoffs identified in scaling law research.
+
+[1](https://ppl-ai-file-upload.s3.amazonaws.com/web/direct-files/attachments/64362196/16a80dc3-b6bc-4610-baf5-93bc13639b61/2025-Lecture-9-Scaling-laws-basics.pdf)
+
+## Note
